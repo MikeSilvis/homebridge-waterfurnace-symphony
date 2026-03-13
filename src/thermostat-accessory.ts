@@ -2,9 +2,12 @@ import { PlatformAccessory, Service, Characteristic, CharacteristicValue } from 
 import { SymphonyPlatform } from "./platform";
 import { SymphonyClient, MODE, MODE_OF_OPERATION, ZoneData } from "./symphony-client";
 
+const WRITE_DEBOUNCE_MS = 500;
+
 export class ThermostatAccessory {
   private service: Service;
   private humidityService: Service;
+  private writeTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
   private readonly Characteristic: typeof Characteristic;
 
@@ -44,7 +47,7 @@ export class ThermostatAccessory {
     // Target temperature (read/write)
     this.service
       .getCharacteristic(platform.Characteristic.TargetTemperature)
-      .setProps({ minValue: 10, maxValue: 32, minStep: 0.5 })
+      .setProps({ minValue: 7, maxValue: 35, minStep: 0.5 })
       .onGet(() => this.getTargetTemp())
       .onSet((value) => this.setTargetTemp(value));
 
@@ -62,14 +65,14 @@ export class ThermostatAccessory {
     // Cooling threshold (for Auto mode)
     this.service
       .getCharacteristic(platform.Characteristic.CoolingThresholdTemperature)
-      .setProps({ minValue: 10, maxValue: 35, minStep: 0.5 })
+      .setProps({ minValue: 7, maxValue: 35, minStep: 0.5 })
       .onGet(() => this.getCoolingThreshold())
       .onSet((value) => this.setCoolingThreshold(value));
 
     // Heating threshold (for Auto mode)
     this.service
       .getCharacteristic(platform.Characteristic.HeatingThresholdTemperature)
-      .setProps({ minValue: 4, maxValue: 32, minStep: 0.5 })
+      .setProps({ minValue: 4, maxValue: 35, minStep: 0.5 })
       .onGet(() => this.getHeatingThreshold())
       .onSet((value) => this.setHeatingThreshold(value));
 
@@ -172,30 +175,30 @@ export class ThermostatAccessory {
 
   // -- Setters --
 
-  private async setTargetTemp(value: CharacteristicValue): Promise<void> {
+  private setTargetTemp(value: CharacteristicValue): void {
     const data = this.getZoneData();
     if (!data) return;
 
     const tempF = this.cToF(value as number);
 
-    if (data.activeMode === MODE.COOL) {
-      await this.client.setCoolingSetpoint(this.zone, tempF);
-    } else if (data.activeMode === MODE.HEAT || data.activeMode === MODE.EHEAT) {
-      await this.client.setHeatingSetpoint(this.zone, tempF);
-    } else {
-      // Auto mode - adjust the closer setpoint
-      const midpoint = (data.heatingSetpoint + data.coolingSetpoint) / 2;
-      if (tempF >= midpoint) {
-        await this.client.setCoolingSetpoint(this.zone, tempF);
+    this.debouncedWrite(`z${this.zone}-target`, () => {
+      if (data.activeMode === MODE.COOL) {
+        this.client.setCoolingSetpoint(this.zone, tempF);
+      } else if (data.activeMode === MODE.HEAT || data.activeMode === MODE.EHEAT) {
+        this.client.setHeatingSetpoint(this.zone, tempF);
       } else {
-        await this.client.setHeatingSetpoint(this.zone, tempF);
+        const midpoint = (data.heatingSetpoint + data.coolingSetpoint) / 2;
+        if (tempF >= midpoint) {
+          this.client.setCoolingSetpoint(this.zone, tempF);
+        } else {
+          this.client.setHeatingSetpoint(this.zone, tempF);
+        }
       }
-    }
-
-    this.platform.log.info(`Zone ${this.zone}: Set target temp to ${tempF}°F`);
+      this.platform.log.info(`Zone ${this.zone}: Set target temp to ${tempF}°F`);
+    });
   }
 
-  private async setTargetState(value: CharacteristicValue): Promise<void> {
+  private setTargetState(value: CharacteristicValue): void {
     const hkState = value as number;
     let symphonyMode: number;
 
@@ -216,20 +219,24 @@ export class ThermostatAccessory {
         symphonyMode = MODE.AUTO;
     }
 
-    await this.client.setMode(this.zone, symphonyMode);
+    this.client.setMode(this.zone, symphonyMode);
     this.platform.log.info(`Zone ${this.zone}: Set mode to ${symphonyMode}`);
   }
 
-  private async setCoolingThreshold(value: CharacteristicValue): Promise<void> {
+  private setCoolingThreshold(value: CharacteristicValue): void {
     const tempF = this.cToF(value as number);
-    await this.client.setCoolingSetpoint(this.zone, tempF);
-    this.platform.log.info(`Zone ${this.zone}: Set cooling setpoint to ${tempF}°F`);
+    this.debouncedWrite(`z${this.zone}-cool`, () => {
+      this.client.setCoolingSetpoint(this.zone, tempF);
+      this.platform.log.info(`Zone ${this.zone}: Set cooling setpoint to ${tempF}°F`);
+    });
   }
 
-  private async setHeatingThreshold(value: CharacteristicValue): Promise<void> {
+  private setHeatingThreshold(value: CharacteristicValue): void {
     const tempF = this.cToF(value as number);
-    await this.client.setHeatingSetpoint(this.zone, tempF);
-    this.platform.log.info(`Zone ${this.zone}: Set heating setpoint to ${tempF}°F`);
+    this.debouncedWrite(`z${this.zone}-heat`, () => {
+      this.client.setHeatingSetpoint(this.zone, tempF);
+      this.platform.log.info(`Zone ${this.zone}: Set heating setpoint to ${tempF}°F`);
+    });
   }
 
   // -- Helpers --
@@ -265,6 +272,18 @@ export class ThermostatAccessory {
       default:
         return this.Characteristic.TargetHeatingCoolingState.AUTO;
     }
+  }
+
+  private debouncedWrite(key: string, fn: () => void): void {
+    const existing = this.writeTimers.get(key);
+    if (existing) clearTimeout(existing);
+    this.writeTimers.set(
+      key,
+      setTimeout(() => {
+        this.writeTimers.delete(key);
+        fn();
+      }, WRITE_DEBOUNCE_MS),
+    );
   }
 
   // Fahrenheit to Celsius

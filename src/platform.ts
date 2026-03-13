@@ -28,6 +28,13 @@ export class SymphonyPlatform implements DynamicPlatformPlugin {
     this.Service = api.hap.Service;
     this.Characteristic = api.hap.Characteristic;
 
+    if (!config.email || !config.password) {
+      this.log.error("Missing email or password in plugin config — plugin will not start");
+      this.client = null as unknown as SymphonyClient;
+      this.zoneNames = {};
+      return;
+    }
+
     this.zoneNames = config.zoneNames || {};
     this.client = new SymphonyClient(config.email, config.password);
 

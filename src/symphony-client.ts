@@ -103,28 +103,28 @@ export class SymphonyClient extends EventEmitter {
     this.connected = false;
   }
 
-  async setHeatingSetpoint(zone: number, temp: number): Promise<void> {
+  setHeatingSetpoint(zone: number, temp: number): void {
     const reg = this.numZones > 1 ? `iz2_z${zone}_heatingsp_write` : "heatingsp_write";
-    await this.writeValue(reg, Math.round(temp));
+    this.writeValue(reg, Math.round(temp));
   }
 
-  async setCoolingSetpoint(zone: number, temp: number): Promise<void> {
+  setCoolingSetpoint(zone: number, temp: number): void {
     const reg = this.numZones > 1 ? `iz2_z${zone}_coolingsp_write` : "coolingsp_write";
-    await this.writeValue(reg, Math.round(temp));
+    this.writeValue(reg, Math.round(temp));
   }
 
-  async setMode(zone: number, mode: number): Promise<void> {
+  setMode(zone: number, mode: number): void {
     const reg = this.numZones > 1 ? `iz2_z${zone}_activemode_write` : "activemode_write";
-    await this.writeValue(reg, mode);
+    this.writeValue(reg, mode);
   }
 
-  async setFanMode(zone: number, fanMode: number): Promise<void> {
+  setFanMode(zone: number, fanMode: number): void {
     const reg = this.numZones > 1 ? `iz2_z${zone}_fanmode_write` : "fanmode_write";
-    await this.writeValue(reg, fanMode);
+    this.writeValue(reg, fanMode);
   }
 
-  async setHumiditySetpoint(value: number): Promise<void> {
-    await this.writeValue("iz2_humidification_setpoint_write", Math.round(value));
+  setHumiditySetpoint(value: number): void {
+    this.writeValue("iz2_humidification_setpoint_write", Math.round(value));
   }
 
   private async httpLogin(): Promise<void> {
@@ -183,13 +183,17 @@ export class SymphonyClient extends EventEmitter {
 
   private async connectWebSocket(): Promise<void> {
     return new Promise((resolve, reject) => {
+      let settled = false;
+
       this.ws = new WebSocket(WS_URL, {
-        rejectUnauthorized: false,
         headers: { "User-Agent": USER_AGENT },
       });
 
       const timeout = setTimeout(() => {
-        reject(new Error("WebSocket connection timed out"));
+        if (!settled) {
+          settled = true;
+          reject(new Error("WebSocket connection timed out"));
+        }
         this.ws?.close();
       }, WS_TIMEOUT_MS);
 
@@ -202,7 +206,13 @@ export class SymphonyClient extends EventEmitter {
       this.ws.on("message", (data: WebSocket.Data) => {
         try {
           const msg = JSON.parse(data.toString());
-          this.handleMessage(msg, resolve);
+          const onConnect = !settled
+            ? () => {
+                settled = true;
+                resolve();
+              }
+            : undefined;
+          this.handleMessage(msg, onConnect);
         } catch (e) {
           this.emit("log", `Failed to parse WS message: ${e}`);
         }
@@ -212,13 +222,19 @@ export class SymphonyClient extends EventEmitter {
         this.connected = false;
         this.stopPolling();
         this.emit("log", "WebSocket closed");
-        this.emit("disconnected");
-        this.scheduleReconnect();
+        if (!settled) {
+          settled = true;
+          reject(new Error("WebSocket closed before login completed"));
+        } else {
+          this.emit("disconnected");
+          this.scheduleReconnect();
+        }
       });
 
       this.ws.on("error", (err) => {
         this.emit("log", `WebSocket error: ${err.message}`);
-        if (!this.connected) {
+        if (!settled) {
+          settled = true;
           clearTimeout(timeout);
           reject(err);
         }
@@ -280,6 +296,7 @@ export class SymphonyClient extends EventEmitter {
         this.readZoneCount();
       } else {
         this.numZones = 1;
+        this.emit("zonesDiscovered", this.numZones);
         this.startPolling();
       }
       return;
@@ -406,7 +423,7 @@ export class SymphonyClient extends EventEmitter {
     });
   }
 
-  private async writeValue(register: string, value: number): Promise<void> {
+  private writeValue(register: string, value: number): void {
     if (!this.connected) {
       throw new Error("Not connected to Symphony");
     }
