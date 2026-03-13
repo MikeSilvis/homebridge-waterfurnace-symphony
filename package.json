@@ -1,6 +1,6 @@
 {
   "name": "homebridge-waterfurnace-symphony",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Homebridge plugin for WaterFurnace Symphony geothermal systems",
   "main": "dist/index.js",
   "files": [

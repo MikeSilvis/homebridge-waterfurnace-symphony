@@ -1,4 +1,5 @@
 import https from "https";
+import crypto from "crypto";
 import WebSocket from "ws";
 import { EventEmitter } from "events";
 
@@ -148,6 +149,10 @@ export class SymphonyClient extends EventEmitter {
           "User-Agent": USER_AGENT,
           Cookie: "legal-acknowledge=yes; temp_unit=f",
         },
+        secureOptions: crypto.constants.SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION,
+        agent: new https.Agent({
+          secureOptions: crypto.constants.SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION,
+        }),
       };
 
       const req = https.request(options, (res) => {
@@ -185,8 +190,11 @@ export class SymphonyClient extends EventEmitter {
     return new Promise((resolve, reject) => {
       let settled = false;
 
+      const secureOptions = crypto.constants.SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION;
       this.ws = new WebSocket(WS_URL, {
         headers: { "User-Agent": USER_AGENT },
+        secureOptions,
+        agent: new https.Agent({ secureOptions }),
       });
 
       const timeout = setTimeout(() => {
