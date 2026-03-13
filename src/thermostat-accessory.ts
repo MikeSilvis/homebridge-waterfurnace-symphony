@@ -1,0 +1,279 @@
+import { PlatformAccessory, Service, Characteristic, CharacteristicValue } from "homebridge";
+import { SymphonyPlatform } from "./platform";
+import { SymphonyClient, MODE, MODE_OF_OPERATION, ZoneData } from "./symphony-client";
+
+export class ThermostatAccessory {
+  private service: Service;
+  private humidityService: Service;
+
+  private readonly Characteristic: typeof Characteristic;
+
+  constructor(
+    private readonly platform: SymphonyPlatform,
+    private readonly accessory: PlatformAccessory,
+    private readonly client: SymphonyClient,
+    private readonly zone: number,
+  ) {
+    this.Characteristic = platform.Characteristic;
+
+    // Accessory info
+    this.accessory
+      .getService(platform.Service.AccessoryInformation)!
+      .setCharacteristic(platform.Characteristic.Manufacturer, "WaterFurnace")
+      .setCharacteristic(platform.Characteristic.Model, "Symphony IZ2")
+      .setCharacteristic(platform.Characteristic.SerialNumber, `${client.gatewayId}-Z${zone}`);
+
+    // Thermostat service
+    this.service =
+      this.accessory.getService(platform.Service.Thermostat) ||
+      this.accessory.addService(platform.Service.Thermostat);
+
+    this.service.setCharacteristic(platform.Characteristic.Name, accessory.displayName);
+
+    // Temperature display units (Fahrenheit)
+    this.service.setCharacteristic(
+      platform.Characteristic.TemperatureDisplayUnits,
+      platform.Characteristic.TemperatureDisplayUnits.FAHRENHEIT,
+    );
+
+    // Current temperature (read-only)
+    this.service
+      .getCharacteristic(platform.Characteristic.CurrentTemperature)
+      .onGet(() => this.getCurrentTemp());
+
+    // Target temperature (read/write)
+    this.service
+      .getCharacteristic(platform.Characteristic.TargetTemperature)
+      .setProps({ minValue: 10, maxValue: 32, minStep: 0.5 })
+      .onGet(() => this.getTargetTemp())
+      .onSet((value) => this.setTargetTemp(value));
+
+    // Current heating/cooling state (read-only)
+    this.service
+      .getCharacteristic(platform.Characteristic.CurrentHeatingCoolingState)
+      .onGet(() => this.getCurrentState());
+
+    // Target heating/cooling state (read/write)
+    this.service
+      .getCharacteristic(platform.Characteristic.TargetHeatingCoolingState)
+      .onGet(() => this.getTargetState())
+      .onSet((value) => this.setTargetState(value));
+
+    // Cooling threshold (for Auto mode)
+    this.service
+      .getCharacteristic(platform.Characteristic.CoolingThresholdTemperature)
+      .setProps({ minValue: 10, maxValue: 35, minStep: 0.5 })
+      .onGet(() => this.getCoolingThreshold())
+      .onSet((value) => this.setCoolingThreshold(value));
+
+    // Heating threshold (for Auto mode)
+    this.service
+      .getCharacteristic(platform.Characteristic.HeatingThresholdTemperature)
+      .setProps({ minValue: 4, maxValue: 32, minStep: 0.5 })
+      .onGet(() => this.getHeatingThreshold())
+      .onSet((value) => this.setHeatingThreshold(value));
+
+    // Humidity sensor
+    this.humidityService =
+      this.accessory.getService(platform.Service.HumiditySensor) ||
+      this.accessory.addService(platform.Service.HumiditySensor);
+
+    this.humidityService
+      .getCharacteristic(platform.Characteristic.CurrentRelativeHumidity)
+      .onGet(() => this.getHumidity());
+  }
+
+  updateFromData(): void {
+    const data = this.getZoneData();
+    if (!data) return;
+
+    this.service.updateCharacteristic(
+      this.Characteristic.CurrentTemperature,
+      this.fToC(data.currentTemp),
+    );
+    this.service.updateCharacteristic(
+      this.Characteristic.TargetTemperature,
+      this.getTargetTempValue(data),
+    );
+    this.service.updateCharacteristic(
+      this.Characteristic.CurrentHeatingCoolingState,
+      this.mapCurrentState(),
+    );
+    this.service.updateCharacteristic(
+      this.Characteristic.TargetHeatingCoolingState,
+      this.mapTargetState(data.activeMode),
+    );
+    this.service.updateCharacteristic(
+      this.Characteristic.CoolingThresholdTemperature,
+      this.fToC(data.coolingSetpoint),
+    );
+    this.service.updateCharacteristic(
+      this.Characteristic.HeatingThresholdTemperature,
+      this.fToC(data.heatingSetpoint),
+    );
+    this.humidityService.updateCharacteristic(
+      this.Characteristic.CurrentRelativeHumidity,
+      data.humidity,
+    );
+  }
+
+  private getZoneData(): ZoneData | undefined {
+    return this.client.currentData.zones.get(this.zone);
+  }
+
+  // -- Getters --
+
+  private getCurrentTemp(): CharacteristicValue {
+    const data = this.getZoneData();
+    return data ? this.fToC(data.currentTemp) : 20;
+  }
+
+  private getTargetTemp(): CharacteristicValue {
+    const data = this.getZoneData();
+    if (!data) return 21;
+    return this.getTargetTempValue(data);
+  }
+
+  private getTargetTempValue(data: ZoneData): number {
+    // In Auto mode, use the midpoint; in Heat/Cool use the respective setpoint
+    if (data.activeMode === MODE.COOL) {
+      return this.fToC(data.coolingSetpoint);
+    } else if (data.activeMode === MODE.HEAT || data.activeMode === MODE.EHEAT) {
+      return this.fToC(data.heatingSetpoint);
+    }
+    // Auto or Off - use midpoint
+    return this.fToC((data.heatingSetpoint + data.coolingSetpoint) / 2);
+  }
+
+  private getCurrentState(): CharacteristicValue {
+    return this.mapCurrentState();
+  }
+
+  private getTargetState(): CharacteristicValue {
+    const data = this.getZoneData();
+    if (!data) return this.Characteristic.TargetHeatingCoolingState.OFF;
+    return this.mapTargetState(data.activeMode);
+  }
+
+  private getCoolingThreshold(): CharacteristicValue {
+    const data = this.getZoneData();
+    return data ? this.fToC(data.coolingSetpoint) : 25;
+  }
+
+  private getHeatingThreshold(): CharacteristicValue {
+    const data = this.getZoneData();
+    return data ? this.fToC(data.heatingSetpoint) : 20;
+  }
+
+  private getHumidity(): CharacteristicValue {
+    const data = this.getZoneData();
+    return data ? data.humidity : 50;
+  }
+
+  // -- Setters --
+
+  private async setTargetTemp(value: CharacteristicValue): Promise<void> {
+    const data = this.getZoneData();
+    if (!data) return;
+
+    const tempF = this.cToF(value as number);
+
+    if (data.activeMode === MODE.COOL) {
+      await this.client.setCoolingSetpoint(this.zone, tempF);
+    } else if (data.activeMode === MODE.HEAT || data.activeMode === MODE.EHEAT) {
+      await this.client.setHeatingSetpoint(this.zone, tempF);
+    } else {
+      // Auto mode - adjust the closer setpoint
+      const midpoint = (data.heatingSetpoint + data.coolingSetpoint) / 2;
+      if (tempF >= midpoint) {
+        await this.client.setCoolingSetpoint(this.zone, tempF);
+      } else {
+        await this.client.setHeatingSetpoint(this.zone, tempF);
+      }
+    }
+
+    this.platform.log.info(`Zone ${this.zone}: Set target temp to ${tempF}°F`);
+  }
+
+  private async setTargetState(value: CharacteristicValue): Promise<void> {
+    const hkState = value as number;
+    let symphonyMode: number;
+
+    switch (hkState) {
+      case this.Characteristic.TargetHeatingCoolingState.OFF:
+        symphonyMode = MODE.OFF;
+        break;
+      case this.Characteristic.TargetHeatingCoolingState.HEAT:
+        symphonyMode = MODE.HEAT;
+        break;
+      case this.Characteristic.TargetHeatingCoolingState.COOL:
+        symphonyMode = MODE.COOL;
+        break;
+      case this.Characteristic.TargetHeatingCoolingState.AUTO:
+        symphonyMode = MODE.AUTO;
+        break;
+      default:
+        symphonyMode = MODE.AUTO;
+    }
+
+    await this.client.setMode(this.zone, symphonyMode);
+    this.platform.log.info(`Zone ${this.zone}: Set mode to ${symphonyMode}`);
+  }
+
+  private async setCoolingThreshold(value: CharacteristicValue): Promise<void> {
+    const tempF = this.cToF(value as number);
+    await this.client.setCoolingSetpoint(this.zone, tempF);
+    this.platform.log.info(`Zone ${this.zone}: Set cooling setpoint to ${tempF}°F`);
+  }
+
+  private async setHeatingThreshold(value: CharacteristicValue): Promise<void> {
+    const tempF = this.cToF(value as number);
+    await this.client.setHeatingSetpoint(this.zone, tempF);
+    this.platform.log.info(`Zone ${this.zone}: Set heating setpoint to ${tempF}°F`);
+  }
+
+  // -- Helpers --
+
+  private mapCurrentState(): number {
+    const modeOp = this.client.currentData.modeOfOperation;
+    switch (modeOp) {
+      case MODE_OF_OPERATION.COOLING_1:
+      case MODE_OF_OPERATION.COOLING_2:
+        return this.Characteristic.CurrentHeatingCoolingState.COOL;
+      case MODE_OF_OPERATION.HEATING_1:
+      case MODE_OF_OPERATION.HEATING_2:
+      case MODE_OF_OPERATION.EHEAT:
+      case MODE_OF_OPERATION.AUX_HEAT:
+      case MODE_OF_OPERATION.REHEAT:
+        return this.Characteristic.CurrentHeatingCoolingState.HEAT;
+      default:
+        return this.Characteristic.CurrentHeatingCoolingState.OFF;
+    }
+  }
+
+  private mapTargetState(symphonyMode: number): number {
+    switch (symphonyMode) {
+      case MODE.OFF:
+        return this.Characteristic.TargetHeatingCoolingState.OFF;
+      case MODE.HEAT:
+      case MODE.EHEAT:
+        return this.Characteristic.TargetHeatingCoolingState.HEAT;
+      case MODE.COOL:
+        return this.Characteristic.TargetHeatingCoolingState.COOL;
+      case MODE.AUTO:
+        return this.Characteristic.TargetHeatingCoolingState.AUTO;
+      default:
+        return this.Characteristic.TargetHeatingCoolingState.AUTO;
+    }
+  }
+
+  // Fahrenheit to Celsius
+  private fToC(f: number): number {
+    return Math.round(((f - 32) * 5) / 9 * 10) / 10;
+  }
+
+  // Celsius to Fahrenheit
+  private cToF(c: number): number {
+    return Math.round((c * 9) / 5 + 32);
+  }
+}

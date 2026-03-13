@@ -1,0 +1,42 @@
+{
+  "pluginAlias": "WaterFurnaceSymphony",
+  "pluginType": "platform",
+  "singular": true,
+  "headerDisplay": "Connect your WaterFurnace Symphony geothermal system to HomeKit",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string",
+        "default": "WaterFurnace",
+        "required": true
+      },
+      "email": {
+        "title": "Symphony Email",
+        "type": "string",
+        "required": true,
+        "description": "Your symphony.mywaterfurnace.com login email"
+      },
+      "password": {
+        "title": "Symphony Password",
+        "type": "string",
+        "required": true,
+        "description": "Your symphony.mywaterfurnace.com login password"
+      },
+      "zoneNames": {
+        "title": "Zone Names",
+        "type": "object",
+        "description": "Custom names for zones (e.g. z1, z2, z3, z4)",
+        "properties": {
+          "z1": { "title": "Zone 1 Name", "type": "string" },
+          "z2": { "title": "Zone 2 Name", "type": "string" },
+          "z3": { "title": "Zone 3 Name", "type": "string" },
+          "z4": { "title": "Zone 4 Name", "type": "string" },
+          "z5": { "title": "Zone 5 Name", "type": "string" },
+          "z6": { "title": "Zone 6 Name", "type": "string" }
+        }
+      }
+    }
+  }
+}

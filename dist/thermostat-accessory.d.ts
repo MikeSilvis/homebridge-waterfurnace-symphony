@@ -1,0 +1,31 @@
+import { PlatformAccessory } from "homebridge";
+import { SymphonyPlatform } from "./platform";
+import { SymphonyClient } from "./symphony-client";
+export declare class ThermostatAccessory {
+    private readonly platform;
+    private readonly accessory;
+    private readonly client;
+    private readonly zone;
+    private service;
+    private humidityService;
+    private readonly Characteristic;
+    constructor(platform: SymphonyPlatform, accessory: PlatformAccessory, client: SymphonyClient, zone: number);
+    updateFromData(): void;
+    private getZoneData;
+    private getCurrentTemp;
+    private getTargetTemp;
+    private getTargetTempValue;
+    private getCurrentState;
+    private getTargetState;
+    private getCoolingThreshold;
+    private getHeatingThreshold;
+    private getHumidity;
+    private setTargetTemp;
+    private setTargetState;
+    private setCoolingThreshold;
+    private setHeatingThreshold;
+    private mapCurrentState;
+    private mapTargetState;
+    private fToC;
+    private cToF;
+}
