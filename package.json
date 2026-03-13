@@ -3,6 +3,11 @@
   "version": "1.0.0",
   "description": "Homebridge plugin for WaterFurnace Symphony geothermal systems",
   "main": "dist/index.js",
+  "files": [
+    "dist/",
+    "config.schema.json",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
