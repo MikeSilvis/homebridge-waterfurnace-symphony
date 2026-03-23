@@ -1,6 +1,6 @@
 import { PlatformAccessory, Service, Characteristic, CharacteristicValue } from "homebridge";
-import { SymphonyPlatform } from "./platform";
-import { SymphonyClient, MODE, MODE_OF_OPERATION, ZoneData } from "./symphony-client";
+import { SymphonyPlatform } from "./platform.js";
+import { SymphonyClient, MODE, MODE_OF_OPERATION, ZoneData } from "./symphony-client.js";
 
 const WRITE_DEBOUNCE_MS = 500;
 

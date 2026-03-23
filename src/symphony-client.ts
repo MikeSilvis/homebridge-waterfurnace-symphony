@@ -1,7 +1,7 @@
-import https from "https";
-import crypto from "crypto";
+import https from "node:https";
+import crypto from "node:crypto";
 import WebSocket from "ws";
-import { EventEmitter } from "events";
+import { EventEmitter } from "node:events";
 
 const LOGIN_URL = "https://symphony.mywaterfurnace.com/account/login";
 const WS_URL = "wss://awlclientproxy.mywaterfurnace.com:443";

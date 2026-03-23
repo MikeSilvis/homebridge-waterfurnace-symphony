@@ -7,9 +7,9 @@ import {
   Service,
   Characteristic,
 } from "homebridge";
-import { PLATFORM_NAME, PLUGIN_NAME } from "./index";
-import { SymphonyClient } from "./symphony-client";
-import { ThermostatAccessory } from "./thermostat-accessory";
+import { PLATFORM_NAME, PLUGIN_NAME } from "./index.js";
+import { SymphonyClient } from "./symphony-client.js";
+import { ThermostatAccessory } from "./thermostat-accessory.js";
 
 export class SymphonyPlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service;

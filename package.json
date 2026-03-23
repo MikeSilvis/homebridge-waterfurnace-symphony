@@ -1,8 +1,18 @@
 {
   "name": "homebridge-waterfurnace-symphony",
-  "version": "1.0.1",
+  "displayName": "WaterFurnace Symphony",
+  "version": "1.1.0",
   "description": "Homebridge plugin for WaterFurnace Symphony geothermal systems",
+  "type": "module",
   "main": "dist/index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MikeSilvis/homebridge-waterfurnace-symphony.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MikeSilvis/homebridge-waterfurnace-symphony/issues"
+  },
+  "homepage": "https://github.com/MikeSilvis/homebridge-waterfurnace-symphony#readme",
   "files": [
     "dist/",
     "config.schema.json",
@@ -24,16 +34,16 @@
   "author": "Mike Silvis",
   "license": "ISC",
   "engines": {
-    "homebridge": ">=1.6.0",
-    "node": ">=18.0.0"
+    "homebridge": "^1.8.0 || ^2.0.0-beta.0",
+    "node": "^20.15.1 || ^22 || ^24"
   },
   "dependencies": {
     "ws": "^8.16.0"
   },
   "devDependencies": {
-    "@types/node": "^20.11.0",
+    "@types/node": "^22.0.0",
     "@types/ws": "^8.5.10",
-    "homebridge": "^1.8.0",
-    "typescript": "^5.3.0"
+    "homebridge": "^2.0.0-beta.0",
+    "typescript": "^5.5.0"
   }
 }
