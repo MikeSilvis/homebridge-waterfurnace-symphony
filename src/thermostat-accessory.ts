@@ -90,6 +90,12 @@ export class ThermostatAccessory {
     const data = this.getZoneData();
     if (!data) return;
 
+    this.platform.log.debug(
+      `Zone ${this.zone}: Current temp ${data.currentTemp}°F (${this.fToC(data.currentTemp)}°C), ` +
+      `heat setpoint ${data.heatingSetpoint}°F, cool setpoint ${data.coolingSetpoint}°F, ` +
+      `humidity ${data.humidity}%, mode ${data.activeMode}`,
+    );
+
     this.service.updateCharacteristic(
       this.Characteristic.CurrentTemperature,
       this.fToC(data.currentTemp),
@@ -128,7 +134,9 @@ export class ThermostatAccessory {
 
   private getCurrentTemp(): CharacteristicValue {
     const data = this.getZoneData();
-    return data ? this.fToC(data.currentTemp) : 20;
+    const tempC = data ? this.fToC(data.currentTemp) : 20;
+    this.platform.log.debug(`Zone ${this.zone}: HomeKit requested current temp → ${data?.currentTemp ?? "N/A"}°F (${tempC}°C)`);
+    return tempC;
   }
 
   private getTargetTemp(): CharacteristicValue {
