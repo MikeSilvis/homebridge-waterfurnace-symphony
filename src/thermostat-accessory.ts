@@ -188,6 +188,21 @@ export class ThermostatAccessory {
     if (!data) return;
 
     const tempF = this.cToF(value as number);
+    const rounded = Math.round(tempF);
+
+    // Determine which setpoint would be written and check if it already matches
+    if (data.activeMode === MODE.COOL) {
+      if (rounded === Math.round(data.coolingSetpoint)) return;
+    } else if (data.activeMode === MODE.HEAT || data.activeMode === MODE.EHEAT) {
+      if (rounded === Math.round(data.heatingSetpoint)) return;
+    } else {
+      const midpoint = (data.heatingSetpoint + data.coolingSetpoint) / 2;
+      if (tempF >= midpoint) {
+        if (rounded === Math.round(data.coolingSetpoint)) return;
+      } else {
+        if (rounded === Math.round(data.heatingSetpoint)) return;
+      }
+    }
 
     this.debouncedWrite(`z${this.zone}-target`, () => {
       if (data.activeMode === MODE.COOL) {
@@ -232,7 +247,12 @@ export class ThermostatAccessory {
   }
 
   private setCoolingThreshold(value: CharacteristicValue): void {
+    const data = this.getZoneData();
+    if (!data) return;
+
     const tempF = this.cToF(value as number);
+    if (Math.round(tempF) === Math.round(data.coolingSetpoint)) return;
+
     this.debouncedWrite(`z${this.zone}-cool`, () => {
       this.client.setCoolingSetpoint(this.zone, tempF);
       this.platform.log.info(`Zone ${this.zone}: Set cooling setpoint to ${tempF}°F`);
@@ -240,7 +260,12 @@ export class ThermostatAccessory {
   }
 
   private setHeatingThreshold(value: CharacteristicValue): void {
+    const data = this.getZoneData();
+    if (!data) return;
+
     const tempF = this.cToF(value as number);
+    if (Math.round(tempF) === Math.round(data.heatingSetpoint)) return;
+
     this.debouncedWrite(`z${this.zone}-heat`, () => {
       this.client.setHeatingSetpoint(this.zone, tempF);
       this.platform.log.info(`Zone ${this.zone}: Set heating setpoint to ${tempF}°F`);
