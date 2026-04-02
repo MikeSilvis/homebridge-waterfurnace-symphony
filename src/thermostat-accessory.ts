@@ -8,6 +8,7 @@ export class ThermostatAccessory {
   private service: Service;
   private humidityService: Service;
   private writeTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private lastSnapshot: string | undefined;
 
   private readonly Characteristic: typeof Characteristic;
 
@@ -90,11 +91,16 @@ export class ThermostatAccessory {
     const data = this.getZoneData();
     if (!data) return;
 
-    this.platform.log.debug(
-      `Zone ${this.zone}: Current temp ${data.currentTemp}°F (${this.fToC(data.currentTemp)}°C), ` +
-      `heat setpoint ${data.heatingSetpoint}°F, cool setpoint ${data.coolingSetpoint}°F, ` +
-      `humidity ${data.humidity}%, mode ${data.activeMode}`,
-    );
+    const snapshot =
+      `${data.currentTemp}|${data.heatingSetpoint}|${data.coolingSetpoint}|${data.humidity}|${data.activeMode}`;
+    if (snapshot !== this.lastSnapshot) {
+      this.lastSnapshot = snapshot;
+      this.platform.log.debug(
+        `Zone ${this.zone}: Current temp ${data.currentTemp}°F (${this.fToC(data.currentTemp)}°C), ` +
+        `heat setpoint ${data.heatingSetpoint}°F, cool setpoint ${data.coolingSetpoint}°F, ` +
+        `humidity ${data.humidity}%, mode ${data.activeMode}`,
+      );
+    }
 
     this.service.updateCharacteristic(
       this.Characteristic.CurrentTemperature,
