@@ -67,6 +67,8 @@ export class SymphonyClient extends EventEmitter {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private connected = false;
   private lastData: SystemData = { zones: new Map(), modeOfOperation: 0, online: false };
+  // Diagnostic: track raw activesettings per zone so we only log the object when it changes
+  private lastActiveSettings: Map<number, string> = new Map();
 
   constructor(user: string, password: string) {
     super();
@@ -346,6 +348,8 @@ export class SymphonyClient extends EventEmitter {
         const activeSettings = msg[`iz2_z${z}_activesettings`] as Record<string, unknown> | undefined;
         if (!activeSettings) continue;
 
+        this.logActiveSettings(z, activeSettings);
+
         const zone: ZoneData = {
           currentTemp: (msg[`iz2_z${z}_roomtemp`] as number) ?? 0,
           heatingSetpoint: (activeSettings[`iz2_z${z}_heatingsp_read`] as number) ?? 70,
@@ -359,6 +363,7 @@ export class SymphonyClient extends EventEmitter {
       }
     } else {
       const activeSettings = msg.activesettings as Record<string, unknown> | undefined;
+      if (activeSettings) this.logActiveSettings(1, activeSettings);
       const zone: ZoneData = {
         currentTemp: (msg.tstatroomtemp as number) ?? (msg.roomtemp as number) ?? 0,
         heatingSetpoint: (msg.tstatheatingsetpoint as number) ?? (activeSettings?.heatingsp_read as number) ?? 70,
@@ -369,6 +374,16 @@ export class SymphonyClient extends EventEmitter {
       };
       this.lastData.zones.set(1, zone);
     }
+  }
+
+  // Diagnostic: dump the raw activesettings object for a zone whenever it changes.
+  // Used to discover the schedule/hold register that keeps manual setpoints from
+  // being overwritten by the thermostat's program.
+  private logActiveSettings(zone: number, activeSettings: Record<string, unknown>): void {
+    const snapshot = JSON.stringify(activeSettings);
+    if (this.lastActiveSettings.get(zone) === snapshot) return;
+    this.lastActiveSettings.set(zone, snapshot);
+    this.emit("log", `Zone ${zone}: raw activesettings ${snapshot}`);
   }
 
   private readStatType(): void {
