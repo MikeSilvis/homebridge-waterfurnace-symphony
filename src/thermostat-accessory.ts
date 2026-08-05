@@ -10,6 +10,15 @@ const WRITE_DEBOUNCE_MS = 500;
 // setpoint and the adjustment looks like it never took.
 const PENDING_WRITE_TTL_MS = 60_000;
 
+// Symphony's setpoint registers drift off the value that was written to them
+// without anything on the system actually changing, which is what made manual
+// adjustments look like they never took. Treat the HomeKit setpoint as the
+// source of truth and put it back when Symphony wanders off it.
+const REASSERT_LIMIT = 3;
+// A jump larger than this is a real change someone made elsewhere, not the
+// register drifting, so follow it instead of fighting it.
+const REASSERT_MAX_DRIFT_F = 3;
+
 type PendingKey = "heat" | "cool" | "mode";
 
 interface PendingWrite {
@@ -25,9 +34,11 @@ export class ThermostatAccessory {
 
   // Values we have asked Symphony for but have not yet seen echoed back.
   private pending: Map<PendingKey, PendingWrite> = new Map();
-  // Values Symphony has confirmed, so we can tell "our write never landed"
-  // apart from "the schedule or a wall thermostat changed it afterwards".
-  private confirmed: Map<PendingKey, number> = new Map();
+  // What HomeKit asked for, kept after Symphony confirms it so we can tell when
+  // Symphony has drifted off it. Setpoints only — see reconcileKey for why mode
+  // is left alone.
+  private desired: Map<PendingKey, number> = new Map();
+  private reassertAttempts: Map<PendingKey, number> = new Map();
 
   private readonly Characteristic: typeof Characteristic;
 
@@ -173,29 +184,65 @@ export class ThermostatAccessory {
     if (pending) {
       if (Math.round(reported) === Math.round(pending.value)) {
         this.pending.delete(key);
-        this.confirmed.set(key, Math.round(reported));
+        this.reassertAttempts.set(key, 0);
         this.platform.log.debug(`Zone ${this.zone}: ${label} ${pending.value} confirmed by Symphony`);
       } else if (Date.now() > pending.expiresAt) {
         this.pending.delete(key);
-        this.confirmed.delete(key);
         this.platform.log.warn(
-          `Zone ${this.zone}: ${label} was set to ${pending.value} but Symphony still reports ` +
-          `${reported} after ${PENDING_WRITE_TTL_MS / 1000}s — giving up and showing ${reported}`,
+          `Zone ${this.zone}: ${label} ${pending.value} not confirmed after ` +
+          `${PENDING_WRITE_TTL_MS / 1000}s — Symphony reports ${reported}`,
         );
+        this.reassert(key, reported, label);
       }
       return;
     }
 
-    // Nothing of ours in flight, so this change came from outside HomeKit —
-    // the equipment itself, or another client on the Symphony account.
-    const previous = this.confirmed.get(key);
-    if (previous !== undefined && previous !== Math.round(reported)) {
-      this.platform.log.warn(
-        `Zone ${this.zone}: ${label} changed from ${previous} to ${reported} without a HomeKit ` +
-        `write — something outside this plugin changed it`,
+    // Mode is deliberately not re-asserted: activemode is the mode the system
+    // resolved to, so asking for Auto and reading back Cool is correct rather
+    // than drift, and re-writing it would fight the equipment.
+    const desired = this.desired.get(key);
+    if (key === "mode" || desired === undefined) return;
+    if (Math.round(reported) === Math.round(desired)) return;
+
+    if (Math.abs(reported - desired) > REASSERT_MAX_DRIFT_F) {
+      this.desired.delete(key);
+      this.reassertAttempts.delete(key);
+      this.platform.log.info(
+        `Zone ${this.zone}: ${label} changed to ${reported} outside HomeKit — following it`,
       );
-      this.confirmed.set(key, Math.round(reported));
+      return;
     }
+
+    this.platform.log.warn(
+      `Zone ${this.zone}: Symphony moved ${label} from ${desired} to ${reported} on its own — ` +
+      `re-applying ${desired}`,
+    );
+    this.reassert(key, reported, label);
+  }
+
+  // Put the HomeKit setpoint back, giving up after a few tries so we never sit
+  // in a write loop against a value Symphony refuses to take.
+  private reassert(key: PendingKey, reported: number, label: string): void {
+    const desired = this.desired.get(key);
+    if (key === "mode" || desired === undefined) return;
+
+    const attempts = (this.reassertAttempts.get(key) ?? 0) + 1;
+    if (attempts > REASSERT_LIMIT) {
+      this.desired.delete(key);
+      this.reassertAttempts.delete(key);
+      this.platform.log.warn(
+        `Zone ${this.zone}: gave up re-applying ${label} ${desired} after ${REASSERT_LIMIT} ` +
+        `attempts — showing ${reported}`,
+      );
+      return;
+    }
+
+    this.reassertAttempts.set(key, attempts);
+    this.sendWrite(
+      key,
+      desired,
+      `Re-applying ${label} ${desired}°F (attempt ${attempts}/${REASSERT_LIMIT})`,
+    );
   }
 
   private pendingValue(key: PendingKey): number | undefined {
@@ -317,16 +364,7 @@ export class ThermostatAccessory {
     const data = this.getZoneData();
     if (data && this.effectiveMode(data) === symphonyMode) return;
 
-    this.markPending("mode", symphonyMode);
-    this.debouncedWrite(`z${this.zone}-mode`, () => {
-      try {
-        this.client.setMode(this.zone, symphonyMode);
-        this.platform.log.info(`Zone ${this.zone}: Set mode to ${symphonyMode}`);
-      } catch (e) {
-        this.pending.delete("mode");
-        this.platform.log.error(`Zone ${this.zone}: failed to set mode: ${(e as Error).message}`);
-      }
-    });
+    this.sendWrite("mode", symphonyMode, `Set mode to ${symphonyMode}`);
   }
 
   private setCoolingThreshold(value: CharacteristicValue): void {
@@ -348,28 +386,32 @@ export class ThermostatAccessory {
     const current = key === "cool" ? this.effectiveCool(data) : this.effectiveHeat(data);
     if (rounded === Math.round(current)) return;
 
-    this.markPending(key, rounded);
+    const label = key === "cool" ? "cooling setpoint" : "heating setpoint";
+    this.desired.set(key, rounded);
+    this.reassertAttempts.set(key, 0);
+    this.sendWrite(key, rounded, `Set ${label} to ${rounded}°F`);
+  }
 
-    const label = key === "cool" ? "cooling" : "heating";
+  // Single write path for both user changes and re-assertions, so every write
+  // is debounced, tracked as pending, and survives a closed WebSocket.
+  private sendWrite(key: PendingKey, value: number, message: string): void {
+    this.pending.set(key, { value, expiresAt: Date.now() + PENDING_WRITE_TTL_MS });
+
     this.debouncedWrite(`z${this.zone}-${key}`, () => {
       try {
         if (key === "cool") {
-          this.client.setCoolingSetpoint(this.zone, rounded);
+          this.client.setCoolingSetpoint(this.zone, value);
+        } else if (key === "heat") {
+          this.client.setHeatingSetpoint(this.zone, value);
         } else {
-          this.client.setHeatingSetpoint(this.zone, rounded);
+          this.client.setMode(this.zone, value);
         }
-        this.platform.log.info(`Zone ${this.zone}: Set ${label} setpoint to ${rounded}°F`);
+        this.platform.log.info(`Zone ${this.zone}: ${message}`);
       } catch (e) {
         this.pending.delete(key);
-        this.platform.log.error(
-          `Zone ${this.zone}: failed to set ${label} setpoint: ${(e as Error).message}`,
-        );
+        this.platform.log.error(`Zone ${this.zone}: write failed: ${(e as Error).message}`);
       }
     });
-  }
-
-  private markPending(key: PendingKey, value: number): void {
-    this.pending.set(key, { value, expiresAt: Date.now() + PENDING_WRITE_TTL_MS });
   }
 
   // -- Helpers --
