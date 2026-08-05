@@ -8,6 +8,9 @@ const WS_URL = "wss://awlclientproxy.mywaterfurnace.com:443";
 const USER_AGENT = "homebridge-waterfurnace-symphony/1.0";
 const READ_INTERVAL_MS = 15_000;
 const WS_TIMEOUT_MS = 10_000;
+// Symphony acknowledges a write immediately but takes roughly 10-15 seconds to
+// serve the new value back, so re-read a few times instead of once at 2s.
+const WRITE_VERIFY_DELAYS_MS = [5_000, 12_000, 25_000];
 
 export interface ZoneData {
   currentTemp: number;
@@ -65,6 +68,7 @@ export class SymphonyClient extends EventEmitter {
   private numZones = 1;
   private readTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private writeVerifyTimers: Array<ReturnType<typeof setTimeout>> = [];
   private connected = false;
   private lastData: SystemData = { zones: new Map(), modeOfOperation: 0, online: false };
   // Diagnostic: track raw activesettings per zone so we only log the object when it changes
@@ -292,8 +296,7 @@ export class SymphonyClient extends EventEmitter {
       this.handleReadResponse(msg);
     } else if (rsp === "write") {
       this.emit("log", "Write acknowledged");
-      // Re-read after write to get updated values
-      setTimeout(() => this.readAllZones(), 2000);
+      this.scheduleWriteVerification();
     }
   }
 
@@ -473,6 +476,21 @@ export class SymphonyClient extends EventEmitter {
     this.ws.send(JSON.stringify(cmd));
   }
 
+  // Re-read after a write so the new value shows up without waiting for the
+  // next scheduled poll. Restarted on each write so a burst of writes only
+  // leaves one set of pending re-reads.
+  private scheduleWriteVerification(): void {
+    this.clearWriteVerification();
+    this.writeVerifyTimers = WRITE_VERIFY_DELAYS_MS.map((delay) =>
+      setTimeout(() => this.readAllZones(), delay),
+    );
+  }
+
+  private clearWriteVerification(): void {
+    for (const timer of this.writeVerifyTimers) clearTimeout(timer);
+    this.writeVerifyTimers = [];
+  }
+
   private startPolling(): void {
     this.stopPolling();
     // Read immediately
@@ -486,6 +504,7 @@ export class SymphonyClient extends EventEmitter {
       clearInterval(this.readTimer);
       this.readTimer = null;
     }
+    this.clearWriteVerification();
   }
 
   private scheduleReconnect(): void {
