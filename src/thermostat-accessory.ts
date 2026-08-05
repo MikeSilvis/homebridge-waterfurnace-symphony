@@ -186,13 +186,13 @@ export class ThermostatAccessory {
       return;
     }
 
-    // No write of ours in flight, so any change came from the schedule, a wall
-    // thermostat, or the Symphony app. Worth calling out when it undoes us.
+    // Nothing of ours in flight, so this change came from outside HomeKit —
+    // the equipment itself, or another client on the Symphony account.
     const previous = this.confirmed.get(key);
     if (previous !== undefined && previous !== Math.round(reported)) {
       this.platform.log.warn(
-        `Zone ${this.zone}: ${label} changed from ${previous} to ${reported} outside HomeKit ` +
-        `(schedule, wall thermostat, or Symphony app)`,
+        `Zone ${this.zone}: ${label} changed from ${previous} to ${reported} without a HomeKit ` +
+        `write — something outside this plugin changed it`,
       );
       this.confirmed.set(key, Math.round(reported));
     }
